@@ -12,6 +12,8 @@ class BasePlanner(ABC):
     """Base class for all path planners."""
     
     def __init__(self, 
+                 start: Optional[np.ndarray] = None,
+                 goal: Optional[np.ndarray] = None,
                  client_id: Optional[int] = None,
                  obstacle_ids: Optional[List[int]] = None):
         """
@@ -19,11 +21,17 @@ class BasePlanner(ABC):
         
         Parameters
         ----------
+        start : Optional[np.ndarray]
+            Start position (x, y, z)
+        goal : Optional[np.ndarray]
+            Goal position (x, y, z)
         client_id : Optional[int]
             PyBullet client ID for collision checking
         obstacle_ids : Optional[List[int]]
             List of obstacle IDs for collision checking
         """
+        self.start = np.array(start) if start is not None else None
+        self.goal = np.array(goal) if goal is not None else None
         self.client_id = client_id
         self.obstacle_ids = obstacle_ids or []
         
