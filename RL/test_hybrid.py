@@ -184,7 +184,27 @@ def main():
             # Важно: действие должно быть в формате [vx, vy, vz, yaw_rate]
             # и должно быть 2D массивом для env.step
             action_2d = np.array([action])
-            obs, _r, terminated, truncated, info = env.step(action_2d)
+            
+            # Отладочная информация о действии
+            if step_count % 100 == 0:
+                print(f"  Action shape: {action_2d.shape}, dtype: {action_2d.dtype}")
+                
+            # Проверяем, что действие не содержит NaN или Inf
+            if np.isnan(action).any() or np.isinf(action).any():
+                print(f"WARNING: Invalid action detected: {action}")
+                action = np.clip(np.nan_to_num(action), -2.0, 2.0)
+                action_2d = np.array([action])
+                
+            # Выполняем шаг в среде
+            try:
+                obs, _r, terminated, truncated, info = env.step(action_2d)
+            except Exception as e:
+                print(f"ERROR during env.step(): {e}")
+                print(f"Action was: {action_2d}")
+                # Пробуем с нулевым действием
+                action = np.zeros(4)
+                action_2d = np.array([action])
+                obs, _r, terminated, truncated, info = env.step(action_2d)
             
             # Обновляем время и энергию
             t_sim += SIM_DT
@@ -222,7 +242,7 @@ def main():
         return ValidationResult(
             uid=uid,
             success=success,
-            time=t_sim,
+            time_sec=t_sim,
             energy=energy,
             score=flight_reward(success, t_sim, energy, task.horizon)
         )
