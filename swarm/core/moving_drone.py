@@ -9,6 +9,7 @@ from gym_pybullet_drones.envs.BaseRLAviary import BaseRLAviary
 from gym_pybullet_drones.utils.enums import (
     DroneModel, Physics, ActionType, ObservationType,
 )
+import pybullet as p
 
 # ── project‑level utilities ────────────────────────────────────────────────
 from swarm.validator.reward import flight_reward          # 3‑term scorer
@@ -184,6 +185,50 @@ class MovingDroneAviary(BaseRLAviary):
             "t_to_goal"       : self._t_to_goal,
         }
 
+    # -------- action preprocessing ---------------------------------------- #
+    def _preprocessAction(self, action):
+        """
+        Переопределение метода для правильной обработки команд скорости.
+        
+        В оригинальном методе для ActionType.VEL скорость масштабируется значением
+        target[3] (yaw_rate), что приводит к нулевой скорости, если yaw_rate=0.
+        
+        Эта реализация использует непосредственно значения vx, vy, vz без масштабирования.
+        """
+        rpm = np.zeros((self.NUM_DRONES, 4))
+        
+        for k in range(action.shape[0]):
+            target = action[k, :]
+            
+            if self.ACT_TYPE == ActionType.VEL:
+                state = self._getDroneStateVector(k)
+                
+                # Используем непосредственно компоненты скорости без масштабирования yaw_rate
+                target_velocity = target[0:3]
+                
+                # Ограничиваем скорость, если она превышает лимит
+                speed = np.linalg.norm(target_velocity)
+                if speed > self.SPEED_LIMIT and speed > 0:
+                    target_velocity = target_velocity * (self.SPEED_LIMIT / speed)
+                
+                # Вычисляем RPM через контроллер
+                temp, _, _ = self.ctrl[k].computeControl(
+                    control_timestep=self.CTRL_TIMESTEP,
+                    cur_pos=state[0:3],
+                    cur_quat=state[3:7],
+                    cur_vel=state[10:13],
+                    cur_ang_vel=state[13:16],
+                    target_pos=state[0:3],  # текущая позиция
+                    target_rpy=np.array([0, 0, state[9]]),  # сохраняем текущий yaw
+                    target_vel=target_velocity  # целевая скорость напрямую
+                )
+                rpm[k, :] = temp
+            else:
+                # Для других типов действий используем оригинальную реализацию
+                rpm[k, :] = super()._preprocessAction(action[k:k+1, :])[0]
+                
+        return rpm
+        
     # -------- observation extension -------------------------------------- #
     def _computeObs(self) -> np.ndarray:
         """
