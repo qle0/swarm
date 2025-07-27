@@ -8,6 +8,7 @@ import gymnasium as gym
 from swarm.planners.base_planner import BasePlanner
 from swarm.planners.rrt import RRTPlanner
 from swarm.planners.rrt_optimized import OptimizedRRTPlanner
+from swarm.planners.adaptive_rrt import AdaptiveRRTPlanner
 from swarm.planners.dijkstra import DijkstraPlanner
 from swarm.planners.astar import AStarPlanner
 from swarm.planners.path_smoother import PathSmoother
@@ -40,7 +41,7 @@ class PlannerPolicy:
         action_space : gym.spaces.Space
             Action space
         planner_type : str
-            Type of planner to use ("rrt", "rrt_optimized", "dijkstra", "astar")
+            Type of planner to use ("rrt", "rrt_optimized", "adaptive_rrt", "dijkstra", "astar")
         client_id : Optional[int]
             PyBullet client ID
         obstacle_ids : Optional[List[int]]
@@ -150,6 +151,14 @@ class PlannerPolicy:
             )
         elif self.planner_type == "rrt_optimized":
             self.planner = OptimizedRRTPlanner(
+                start=self.start,
+                goal=self.goal,
+                client_id=self.client_id,
+                obstacle_ids=self.obstacle_ids,
+                **self.kwargs
+            )
+        elif self.planner_type == "adaptive_rrt":
+            self.planner = AdaptiveRRTPlanner(
                 start=self.start,
                 goal=self.goal,
                 client_id=self.client_id,

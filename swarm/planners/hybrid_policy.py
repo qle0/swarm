@@ -1,5 +1,9 @@
 """
-Hybrid policy combining RRT+A* path planning with RL local control.
+Hybrid policy combining advanced path planning with RL local control.
+
+This policy uses a parallel planner that runs multiple path planning algorithms
+(RRT, RRT+Dijkstra, RRT+A*, RRT*) and selects the best result based on path quality,
+planning time, and path length.
 """
 from typing import List, Tuple, Dict, Any, Optional
 import numpy as np
@@ -8,17 +12,22 @@ import time
 from swarm.planners.rrt import RRTPlanner
 from swarm.planners.rrt_dijkstra import RRTDijkstraPlanner
 from swarm.planners.rrt_astar import RRTAStarPlanner
+from swarm.planners.rrt_star import RRTStarPlanner
+from swarm.planners.parallel_planner import ParallelPlanner
 
 
 class HybridPolicy:
     """
     Hybrid policy that combines global path planning with local RL control.
     
-    This policy uses RRT+A* for global path planning to generate optimal waypoints,
+    This policy uses a parallel planner for global path planning to generate optimal waypoints,
     and then uses an RL policy for local control to follow the path while
-    avoiding dynamic obstacles. The RRT+A* approach first builds a graph using RRT,
-    then finds the shortest path in that graph using A* algorithm, and finally
-    applies path smoothing to further optimize the path.
+    avoiding dynamic obstacles. The parallel planner runs multiple algorithms
+    (RRT, RRT+Dijkstra, RRT+A*, RRT*) in parallel and selects the best result
+    based on path quality, planning time, and path length.
+    
+    The policy also adapts to the environment complexity by adjusting the planning
+    parameters based on the collision rate and planning success.
     """
     
     def __init__(self, 
@@ -59,6 +68,9 @@ class HybridPolicy:
         self.obstacle_ids = obstacle_ids or []
         self.planning_horizon = planning_horizon
         self.replan_threshold = replan_threshold
+        
+        # Initialize planning history for adaptive parameter tuning
+        self.planning_history = []
         self.rrt_kwargs = rrt_kwargs
         
         # Path planning variables
@@ -270,19 +282,46 @@ class HybridPolicy:
                 
                 return
             
-            # If direct path is not possible, use RRT+A*
-            # Create RRT+A* planner
-            print("Using RRT+A* for path planning")
-            planner = RRTAStarPlanner(
+            # If direct path is not possible, use parallel planner
+            # Create parallel planner that runs multiple algorithms
+            print("Using parallel planner for path planning")
+            
+            # Adapt parameters based on environment complexity
+            max_iterations = self.rrt_kwargs.get('max_iterations', 1000)
+            step_size = self.rrt_kwargs.get('step_size', 0.2)
+            goal_sample_rate = self.rrt_kwargs.get('goal_sample_rate', 0.2)
+            search_radius = self.rrt_kwargs.get('search_radius', 1.5)
+            
+            # If we have planning history, adapt parameters
+            if hasattr(self, 'planning_history') and len(self.planning_history) > 0:
+                # Calculate success rate
+                success_rate = sum(1 for h in self.planning_history if h['success']) / len(self.planning_history)
+                
+                # Calculate average planning time
+                avg_planning_time = sum(h['planning_time'] for h in self.planning_history) / len(self.planning_history)
+                
+                # Adapt parameters based on success rate and planning time
+                if success_rate < 0.7:  # Low success rate
+                    max_iterations = int(max_iterations * 1.2)  # Increase iterations
+                    step_size = max(0.1, step_size * 0.9)  # Decrease step size
+                    goal_sample_rate = min(0.3, goal_sample_rate * 1.1)  # Increase goal bias
+                elif avg_planning_time > 0.5:  # Planning takes too long
+                    max_iterations = int(max_iterations * 0.9)  # Decrease iterations
+                    step_size = min(0.3, step_size * 1.1)  # Increase step size
+                    search_radius = min(2.0, search_radius * 1.1)  # Increase search radius
+            
+            # Create the parallel planner
+            planner = ParallelPlanner(
                 start=start_position,
                 goal=goal_position,
                 client_id=self.client_id,
                 obstacle_ids=self.obstacle_ids,
-                max_iterations=self.rrt_kwargs.get('max_iterations', 1000),
-                step_size=self.rrt_kwargs.get('step_size', 0.2),
-                goal_sample_rate=self.rrt_kwargs.get('goal_sample_rate', 0.2),  # Increased from 0.1 to 0.2
-                search_radius=self.rrt_kwargs.get('search_radius', 1.5),        # Increased from 1.0 to 1.5
-                smoothing_iterations=10
+                max_iterations=max_iterations,
+                step_size=step_size,
+                goal_sample_rate=goal_sample_rate,
+                search_radius=search_radius,
+                timeout=2.0,  # 2 second timeout for planning
+                planners=['rrt', 'rrt_dijkstra', 'rrt_astar', 'rrt_star']
             )
             
             # Plan path (but limit iterations to prevent hanging)
@@ -298,9 +337,33 @@ class HybridPolicy:
             builtins.print = silent_print
             
             try:
+                start_time = time.time()
                 path = planner.plan()
+                planning_time = time.time() - start_time
             finally:
                 builtins.print = old_print
+            
+            # Record planning history for adaptive parameter tuning
+            planning_success = len(path) > 1
+            planning_record = {
+                'success': planning_success,
+                'planning_time': planning_time,
+                'path_length': len(path),
+                'parameters': {
+                    'max_iterations': max_iterations,
+                    'step_size': step_size,
+                    'goal_sample_rate': goal_sample_rate,
+                    'search_radius': search_radius
+                }
+            }
+            self.planning_history.append(planning_record)
+            
+            # Keep only the last 10 planning records
+            if len(self.planning_history) > 10:
+                self.planning_history = self.planning_history[-10:]
+            
+            print(f"Path planning completed in {planning_time:.4f} seconds")
+            print(f"Path length: {len(path)}")
             
             if len(path) > 0:
                 # Optimize the path by removing unnecessary waypoints

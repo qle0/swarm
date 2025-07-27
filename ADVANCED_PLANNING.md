@@ -210,13 +210,188 @@ python RL/compare_approaches.py --seeds 1,2,3,4,5
 - Enable frequent replanning
 - Use `gradient` smoothing for obstacle avoidance
 
+### 5. Adaptive RRT (`adaptive_rrt.py`)
+
+Advanced RRT variant that adapts parameters based on environment complexity:
+
+**Key Features:**
+- **Environment Analysis**: Analyzes obstacle density and path complexity
+- **Parameter Adaptation**: Adjusts iterations, step size, and goal sampling
+- **Complexity Metrics**: Provides detailed environment complexity analysis
+- **Multi-Strategy Support**: Can run multiple strategies and select best result
+
+**Adaptation Logic:**
+- Dense environments → smaller step sizes, more iterations
+- Complex paths → reduced goal sampling, more exploration
+- Long distances → increased iterations, adjusted sampling rates
+
+**Parameters:**
+- `adaptation_enabled`: Enable parameter adaptation (default: True)
+- `complexity_analysis_samples`: Samples for complexity analysis (default: 50)
+- `base_max_iterations`: Base iteration count before adaptation
+- `base_step_size`: Base step size before adaptation
+
+### 6. RRT* Algorithm (`rrt_star.py`)
+
+Asymptotically optimal variant of RRT with rewiring:
+
+**Key Features:**
+- **Asymptotic Optimality**: Guarantees optimal paths as samples increase
+- **Tree Rewiring**: Continuously improves path quality
+- **Adaptive Radius**: Dynamic rewiring radius based on node count
+- **Cost Optimization**: Minimizes path cost through parent selection
+
+**Improvements over RRT:**
+- Optimal paths in the limit
+- Better path quality with more samples
+- Continuous improvement during planning
+
+### 7. Multi-Strategy Planning (`adaptive_rrt.py`)
+
+Runs multiple planning strategies and selects the best result:
+
+**Strategies Available:**
+- `adaptive`: Adaptive RRT with environment analysis
+- `optimized`: Optimized RRT with fast convergence
+- `basic`: Standard RRT for comparison
+
+**Selection Modes:**
+- Sequential execution with time budgets
+- Best result selection based on cost or time
+- Early termination on first success
+
+### 8. Parallel Planning (`parallel_planner.py`)
+
+Runs multiple algorithms simultaneously for robust planning:
+
+**Key Features:**
+- **Concurrent Execution**: Multiple algorithms in parallel
+- **Result Selection**: Best cost, fastest time, or first success
+- **Timeout Management**: Configurable time limits
+- **Comprehensive Statistics**: Detailed performance metrics
+
+**Supported Algorithms:**
+- All RRT variants (basic, optimized, adaptive, RRT*)
+- Grid-based algorithms (A*, Dijkstra)
+- Hybrid approaches
+
+## Advanced Usage Examples
+
+### Adaptive RRT with Environment Analysis
+
+```python
+from swarm.planners.adaptive_rrt import AdaptiveRRTPlanner
+
+# Adaptive RRT with full environment analysis
+planner = AdaptiveRRTPlanner(
+    start=start_pos,
+    goal=goal_pos,
+    client_id=client_id,
+    obstacle_ids=obstacle_ids,
+    base_max_iterations=1000,
+    adaptation_enabled=True,
+    complexity_analysis_samples=100
+)
+
+path = planner.plan()
+stats = planner.get_statistics()
+
+# Access complexity metrics
+complexity = stats['complexity_metrics']
+print(f"Environment complexity: {complexity['complexity_score']:.2f}")
+print(f"Obstacle density: {complexity['collision_density']:.2f}")
+```
+
+### Multi-Strategy Planning
+
+```python
+from swarm.planners.adaptive_rrt import MultiStrategyRRTPlanner
+
+# Try multiple strategies with time budget
+planner = MultiStrategyRRTPlanner(
+    start=start_pos,
+    goal=goal_pos,
+    strategies=['adaptive', 'optimized', 'basic'],
+    time_budget=10.0,
+    parallel_execution=False
+)
+
+path = planner.plan()
+stats = planner.get_statistics()
+
+# Review strategy performance
+for result in stats['results']:
+    print(f"{result['strategy']}: cost={result['cost']:.2f}, "
+          f"time={result['time']:.2f}s")
+```
+
+### Parallel Algorithm Execution
+
+```python
+from swarm.planners.parallel_planner import ParallelPlanner
+
+# Run multiple algorithms in parallel
+planner = ParallelPlanner(
+    start=start_pos,
+    goal=goal_pos,
+    algorithms=['adaptive_rrt', 'rrt_optimized', 'astar'],
+    selection_strategy='best_cost',
+    timeout=15.0,
+    max_workers=3
+)
+
+path = planner.plan()
+stats = planner.get_statistics()
+
+# Best result information
+best = stats['best_result']
+print(f"Best algorithm: {best['algorithm']}")
+print(f"Best cost: {best['cost']:.2f}")
+```
+
+## Performance Comparison (Updated)
+
+| Algorithm | Speed | Optimality | Adaptability | Memory | Best Use Case |
+|-----------|-------|------------|--------------|--------|---------------|
+| Basic RRT | Medium | Poor | None | Low | Simple environments |
+| Optimized RRT | Fast | Good | Limited | Medium | General purpose |
+| Adaptive RRT | Variable | Good | High | Medium | Complex/unknown environments |
+| RRT* | Slow | Optimal* | None | High | When optimality is critical |
+| A* | Very Fast | Optimal | None | Medium | Grid-based navigation |
+| Parallel | Fast | Best Available | High | High | Time-critical applications |
+| Multi-Strategy | Variable | Good | High | Medium | Robust planning |
+
+*Asymptotically optimal
+
+## Configuration Recommendations (Updated)
+
+### For Unknown Environments
+- Use Adaptive RRT with `adaptation_enabled=True`
+- Set `complexity_analysis_samples=100` for thorough analysis
+- Enable multiple strategies for robustness
+
+### For Time-Critical Applications
+- Use Parallel planner with `selection_strategy='first_success'`
+- Include fast algorithms: `['rrt_optimized', 'astar']`
+- Set appropriate timeout values
+
+### For Optimal Paths
+- Use RRT* with high iteration count
+- Enable adaptive radius for better convergence
+- Consider parallel execution with multiple RRT* instances
+
+### For Robust Planning
+- Use Multi-Strategy planner with diverse strategies
+- Set reasonable time budgets per strategy
+- Include both sampling-based and grid-based methods
+
 ## Future Improvements
 
-1. **RRT* Integration**: Implement asymptotically optimal RRT*
-2. **Dynamic Obstacles**: Add support for moving obstacles
-3. **Multi-Goal Planning**: Plan paths to multiple goals
-4. **Parallel Planning**: Implement parallel RRT variants
-5. **Learning-Based Heuristics**: Use learned heuristics for A*
+1. **Dynamic Obstacles**: Add support for moving obstacles
+2. **Multi-Goal Planning**: Plan paths to multiple goals simultaneously
+3. **Learning-Based Adaptation**: Use ML to improve parameter adaptation
+4. **GPU Acceleration**: Implement GPU-accelerated collision checking
+5. **Anytime Planning**: Algorithms that improve solutions over time
 
 ## References
 
