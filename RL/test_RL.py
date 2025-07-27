@@ -40,7 +40,7 @@ parser.add_argument(
     help="Path to the Stable‑Baselines 3 .zip file",
 )
 parser.add_argument(
-    "--planner", type=str, choices=["rrt", "dijkstra"], default=None,
+    "--planner", type=str, choices=["rrt", "rrt_optimized", "adaptive_rrt", "dijkstra", "astar"], default=None,
     help="Path planning algorithm to use instead of an RL policy",
 )
 parser.add_argument(
@@ -91,28 +91,22 @@ else:
     
     # Create environment to get obstacle IDs
     env = make_env(task, gui=args.gui)
-    cli = env.getPyBulletClient()
     
-    # Get all object IDs in the simulation
-    num_objects = cli.getNumBodies()
+    # For planners, we'll use a simple obstacle list
+    # In a real scenario, this would be populated from the environment
     obstacle_ids = []
-    for i in range(num_objects):
-        body_info = cli.getBodyInfo(i)
-        body_name = body_info[1].decode('utf-8')
-        # Exclude the drone and the goal
-        if "drone" not in body_name.lower() and "goal" not in body_name.lower():
-            obstacle_ids.append(i)
     
     # Create planner policy
     model = PlannerPolicy(
         observation_space=env.observation_space,
         action_space=env.action_space,
         planner_type=args.planner,
-        client_id=cli,
+        client_id=None,  # Will be set during planning
         obstacle_ids=obstacle_ids,
         # Additional planner-specific parameters
-        max_iterations=5000 if args.planner == "rrt" else None,
-        resolution=0.2 if args.planner == "dijkstra" else None,
+        max_iterations=5000 if args.planner in ["rrt", "rrt_optimized"] else None,
+        base_max_iterations=5000 if args.planner == "adaptive_rrt" else None,
+        grid_resolution=0.2 if args.planner in ["dijkstra", "astar"] else None,
     )
     
     # Close the environment (will be recreated in _run_episode)
