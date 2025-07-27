@@ -501,14 +501,21 @@ class HybridPolicy:
         Returns
         -------
         np.ndarray
-            Action (RPM command for 4 motors)
+            Action (velocity command [vx, vy, vz, yaw_rate])
         """
+        # Проверяем, что цель не нулевая
+        if np.all(goal_position == 0):
+            print("WARNING: Goal position is [0,0,0], using self.goal_position instead")
+            if hasattr(self, 'goal_position') and self.goal_position is not None:
+                goal_position = self.goal_position
+            else:
+                print("ERROR: No valid goal position found!")
+                
         # Вычисляем вектор направления к цели
         direction = goal_position - current_position
         distance = np.linalg.norm(direction)
         
         # Преобразуем в команды для дрона в формате [vx, vy, vz, yaw_rate]
-        # Это формат, который ожидает симулятор
         if distance > 0:
             # Нормализуем направление
             norm_direction = direction / distance
@@ -540,12 +547,16 @@ class HybridPolicy:
         yaw_rate = 0.0
         
         # Формируем команду в формате [vx, vy, vz, yaw_rate]
-        # Это формат, который ожидает симулятор для преобразования в RPM
         action = np.array([vx, vy, vz, yaw_rate])
         
         # Выводим отладочную информацию
         if self.waypoint_control_count % 100 == 0:
-            print(f"  Direction: {direction}, Distance: {distance:.2f}")
+            print(f"PRECISE GOAL CONTROL:")
+            print(f"  Current position: {current_position}")
+            print(f"  Goal position: {goal_position}")
+            print(f"  Distance to goal: {distance:.2f}")
+            print(f"  Direction: {direction}")
+            print(f"  Speed: {speed if distance > 0 else 0}")
             print(f"  Action (velocity): {action}")
         
         return action

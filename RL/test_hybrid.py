@@ -126,7 +126,7 @@ def main():
         """
         Запускает эпизод с прямым управлением дроном.
         """
-        # Создаем среду
+        # Создаем среду с ActionType.VEL (скорости, а не RPM)
         env = make_env(task, gui=gui)
         
         # Получаем начальное наблюдение
@@ -149,9 +149,22 @@ def main():
         success = False
         step_count = 0
         
+        # Получаем доступ к PyBullet
+        if hasattr(env, 'CLIENT'):
+            client_id = env.CLIENT
+        elif hasattr(env, '_cli'):
+            client_id = env._cli
+        else:
+            client_id = 0
+            
+        if hasattr(env, 'DRONE_IDS'):
+            drone_id = env.DRONE_IDS[0]
+        else:
+            drone_id = 1
+            
         # Основной цикл симуляции
         while t_sim < task.horizon:
-            # Получаем действие от модели
+            # Получаем действие от модели - это скорости [vx, vy, vz, yaw_rate]
             action = model.act(obs, t_sim)
             
             # Выводим отладочную информацию
@@ -161,9 +174,17 @@ def main():
                 print(f"  Goal: {task.goal}")
                 print(f"  Distance: {np.linalg.norm(last_pos - np.array(task.goal)):.2f}")
                 print(f"  Action: {action}")
+                
+                # Получаем текущую позицию дрона из PyBullet
+                import pybullet as p
+                pos, orn = p.getBasePositionAndOrientation(drone_id, physicsClientId=client_id)
+                print(f"  PyBullet position: {pos}")
             
             # Применяем действие к среде
-            obs, _r, terminated, truncated, info = env.step(action[None, :])
+            # Важно: действие должно быть в формате [vx, vy, vz, yaw_rate]
+            # и должно быть 2D массивом для env.step
+            action_2d = np.array([action])
+            obs, _r, terminated, truncated, info = env.step(action_2d)
             
             # Обновляем время и энергию
             t_sim += SIM_DT
@@ -189,18 +210,6 @@ def main():
             if gui:
                 try:
                     from swarm.core.drone import track_drone
-                    if hasattr(env, 'CLIENT'):
-                        client_id = env.CLIENT
-                    elif hasattr(env, '_cli'):
-                        client_id = env._cli
-                    else:
-                        client_id = 0
-                        
-                    if hasattr(env, 'DRONE_IDS'):
-                        drone_id = env.DRONE_IDS[0]
-                    else:
-                        drone_id = 1
-                        
                     track_drone(cli=client_id, drone_id=drone_id)
                 except Exception as e:
                     print(f"Error tracking drone: {e}")
@@ -215,7 +224,7 @@ def main():
             success=success,
             time=t_sim,
             energy=energy,
-            score=flight_reward(success, t_sim, energy)
+            score=flight_reward(success, t_sim, energy, task.horizon)
         )
     
     # Запускаем эпизод с собственной функцией
