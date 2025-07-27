@@ -380,8 +380,28 @@ class HybridPolicy:
         np.ndarray
             Action
         """
+        # Проверяем, что цель установлена правильно
+        if goal_position is None or np.all(goal_position == 0):
+            # Если цель не установлена или равна нулю, используем цель из self.goal_position
+            if self.goal_position is not None:
+                goal_position = self.goal_position
+            else:
+                # Если и self.goal_position не установлен, используем цель из наблюдения
+                if observation.size >= 9:
+                    goal_position = observation[6:9]
+                else:
+                    # Если нет цели, просто зависаем
+                    return np.array([0.0, 0.0, 0.0, 0.0])
+        
         # Calculate distance to goal
         distance_to_goal = np.linalg.norm(current_position - goal_position)
+        
+        # Выводим отладочную информацию
+        if self.waypoint_control_count % 100 == 0:
+            print(f"HYBRID ACTION:")
+            print(f"  Current position: {current_position}")
+            print(f"  Goal position: {goal_position}")
+            print(f"  Distance to goal: {distance_to_goal:.2f}")
         
         # DIRECT GOAL APPROACH: If we're very close to the goal, target it directly
         if distance_to_goal < 0.3:
@@ -455,16 +475,17 @@ class HybridPolicy:
             return self._waypoint_control(current_position, target_waypoint)
         
         # NO PATH: If we have no path, use direct control with intermediate point
-        midpoint = (current_position + goal_position) / 2
-        midpoint[2] += 1.0  # Add height to avoid obstacles
+        # Создаем прямой путь к цели через промежуточную точку
+        self._plan_global_path(current_position, goal_position)
         
-        # If we're closer to midpoint, target goal directly
-        if np.linalg.norm(current_position - midpoint) < 1.0:
+        # Если путь создан успешно, следуем по нему
+        if len(self.global_path) > 0:
             self.waypoint_control_count += 1
-            return self._precise_goal_control(current_position, goal_position)
-        else:
-            self.waypoint_control_count += 1
-            return self._waypoint_control(current_position, midpoint)
+            return self._waypoint_control(current_position, self.global_path[0])
+        
+        # Если не удалось создать путь, идем напрямую к цели
+        self.waypoint_control_count += 1
+        return self._precise_goal_control(current_position, goal_position)
         
     def _precise_goal_control(self, current_position: np.ndarray, goal_position: np.ndarray) -> np.ndarray:
         """
@@ -480,44 +501,54 @@ class HybridPolicy:
         Returns
         -------
         np.ndarray
-            Action (RPM command)
+            Action (RPM command for 4 motors)
         """
+        # Вычисляем вектор направления к цели
         direction = goal_position - current_position
         distance = np.linalg.norm(direction)
         
+        # Преобразуем в команды для дрона в формате [vx, vy, vz, yaw_rate]
+        # Это формат, который ожидает симулятор
         if distance > 0:
-            # Adaptive speed based on distance
-            if distance < 0.2:
-                # Very close - very precise, slow movement
-                speed = min(0.3, distance * 3.0)
-            elif distance < 0.5:
-                # Close - precise movement
-                speed = min(0.8, distance * 2.5)
-            else:
-                # Further away - faster movement
-                speed = min(2.0, distance * 2.0)
-                
-            # Normalize direction and apply speed
-            velocity = direction / distance * speed
+            # Нормализуем направление
+            norm_direction = direction / distance
             
-            # Add slight upward bias to avoid ground collisions
+            # Адаптивная скорость в зависимости от расстояния
+            if distance < 0.3:
+                # Очень близко - очень точное, медленное движение
+                speed = min(0.3, distance * 2.0)
+            elif distance < 1.0:
+                # Близко - точное движение
+                speed = min(0.8, distance * 1.5)
+            else:
+                # Дальше - более быстрое движение
+                speed = min(2.0, distance)
+            
+            # Применяем скорость к направлению
+            vx = norm_direction[0] * speed
+            vy = norm_direction[1] * speed
+            vz = norm_direction[2] * speed
+            
+            # Добавляем небольшое смещение вверх, чтобы избежать столкновений с землей
             if current_position[2] < 0.5:
-                velocity[2] += 0.2
+                vz += 0.2
         else:
-            # If we're at the goal, hover
-            velocity = np.zeros(3)
-            # Slight upward force to maintain position
-            velocity[2] = 0.05
+            # Если мы в цели, зависаем
+            vx, vy, vz = 0.0, 0.0, 0.0
         
-        # Convert to RPM with very high gain for precision
-        rpm = np.array([
-            velocity[0] * 2500,  # x velocity to RPM with higher gain
-            velocity[1] * 2500,  # y velocity to RPM with higher gain
-            velocity[2] * 2500,  # z velocity to RPM with higher gain
-            0.0  # yaw rate (not used)
-        ])
+        # Скорость вращения (не используется)
+        yaw_rate = 0.0
         
-        return rpm
+        # Формируем команду в формате [vx, vy, vz, yaw_rate]
+        # Это формат, который ожидает симулятор для преобразования в RPM
+        action = np.array([vx, vy, vz, yaw_rate])
+        
+        # Выводим отладочную информацию
+        if self.waypoint_control_count % 100 == 0:
+            print(f"  Direction: {direction}, Distance: {distance:.2f}")
+            print(f"  Action (velocity): {action}")
+        
+        return action
     
     def _detect_nearby_obstacles(self, position: np.ndarray, radius: float = 1.0) -> bool:
         """
@@ -594,39 +625,47 @@ class HybridPolicy:
         Returns
         -------
         np.ndarray
-            Action (RPM command)
+            Action in format [vx, vy, vz, yaw_rate]
         """
+        # Вычисляем вектор направления к цели
         direction = target_position - current_position
         distance = np.linalg.norm(direction)
         
+        # Преобразуем в команды для дрона в формате [vx, vy, vz, yaw_rate]
         if distance > 0:
-            # Adaptive speed control - slower when close to target
-            if distance < 0.5:
-                # Slow down when close to target for precision
-                speed = min(self.max_speed * 0.5, distance * 2.0)
-            elif distance < 1.0:
-                # Medium speed at medium distance
-                speed = min(self.max_speed * 0.7, distance * 1.5)
-            else:
-                # Full speed when far away
-                speed = self.max_speed
-                
-            velocity = direction / distance * speed
+            # Нормализуем направление
+            norm_direction = direction / distance
             
-            # Add slight upward bias to avoid ground collisions
-            velocity[2] += 0.1
+            # Адаптивная скорость в зависимости от расстояния
+            if distance < 0.5:
+                # Медленно при приближении к цели
+                speed = min(self.max_speed * 0.5, distance * 1.5)
+            elif distance < 1.0:
+                # Средняя скорость на среднем расстоянии
+                speed = min(self.max_speed * 0.7, distance * 1.2)
+            else:
+                # Полная скорость на большом расстоянии
+                speed = min(self.max_speed, distance)
+            
+            # Применяем скорость к направлению
+            vx = norm_direction[0] * speed
+            vy = norm_direction[1] * speed
+            vz = norm_direction[2] * speed
+            
+            # Добавляем небольшое смещение вверх, чтобы избежать столкновений с землей
+            if current_position[2] < 0.5:
+                vz += 0.2
         else:
-            velocity = np.zeros(3)
+            # Если мы в цели, зависаем
+            vx, vy, vz = 0.0, 0.0, 0.0
         
-        # Convert to RPM for the drone with higher gain for more responsive control
-        rpm = np.array([
-            velocity[0] * 1500,  # x velocity to RPM with higher gain
-            velocity[1] * 1500,  # y velocity to RPM with higher gain
-            velocity[2] * 1500,  # z velocity to RPM with higher gain
-            0.0  # yaw rate (not used)
-        ])
+        # Скорость вращения (не используется)
+        yaw_rate = 0.0
         
-        return rpm
+        # Формируем команду в формате [vx, vy, vz, yaw_rate]
+        action = np.array([vx, vy, vz, yaw_rate])
+        
+        return action
     
     def _direct_control(self, current_position: np.ndarray, target_position: np.ndarray) -> np.ndarray:
         """
@@ -642,9 +681,66 @@ class HybridPolicy:
         Returns
         -------
         np.ndarray
+            Action in format [vx, vy, vz, yaw_rate]
+        """
+        # Используем waypoint_control для прямого управления
+        return self._waypoint_control(current_position, target_position)
+    
+    def act(self, observation: np.ndarray, t: float) -> np.ndarray:
+        """
+        Act method for compatibility with the validator's _run_episode function.
+        
+        Parameters
+        ----------
+        observation : np.ndarray
+            Current observation
+        t : float
+            Current time
+            
+        Returns
+        -------
+        np.ndarray
             Action (RPM command)
         """
-        return self._waypoint_control(current_position, target_position)
+        # Получаем текущую позицию из наблюдения
+        if observation.ndim > 1:
+            current_position = observation[0, :3]
+        else:
+            current_position = observation[:3]
+            
+        # Используем self.goal_position, если он установлен
+        if hasattr(self, 'goal_position') and self.goal_position is not None:
+            goal_position = self.goal_position
+        else:
+            # Иначе пытаемся получить цель из наблюдения
+            if observation.size >= 9:
+                if observation.ndim > 1:
+                    goal_position = observation[0, 6:9]
+                else:
+                    goal_position = observation[6:9]
+            else:
+                # Если нет цели, используем нулевую цель
+                goal_position = np.zeros(3)
+                
+        # Вычисляем действие напрямую, минуя predict
+        action = self._get_hybrid_action(observation, current_position, goal_position)
+        
+        # Ensure action is in the correct format (1D array)
+        if len(action.shape) > 1:
+            action = action.flatten()
+            
+        # Ensure action values are reasonable (clip if necessary)
+        action = np.clip(action, -10, 10)
+        
+        # Debug output every 50 steps
+        if self.waypoint_control_count % 50 == 0:
+            print(f"ACT: t={t:.2f}, action={action}")
+            print(f"  Position: {current_position}")
+            print(f"  Goal: {goal_position}")
+            print(f"  Distance: {np.linalg.norm(current_position - goal_position):.2f}")
+        
+        # Return action as a 1D array (required by env.step)
+        return action
     
     def get_statistics(self) -> Dict[str, int]:
         """
