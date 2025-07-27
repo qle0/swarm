@@ -1,20 +1,22 @@
 """
-Hybrid policy combining RRT path planning with RL local control.
+Hybrid policy combining RRT+Dijkstra path planning with RL local control.
 """
 from typing import List, Tuple, Dict, Any, Optional
 import numpy as np
 import time
 
 from swarm.planners.rrt import RRTPlanner
+from swarm.planners.rrt_dijkstra import RRTDijkstraPlanner
 
 
 class HybridPolicy:
     """
     Hybrid policy that combines global path planning with local RL control.
     
-    This policy uses RRT for global path planning to generate waypoints,
+    This policy uses RRT+Dijkstra for global path planning to generate optimal waypoints,
     and then uses an RL policy for local control to follow the path while
-    avoiding dynamic obstacles.
+    avoiding dynamic obstacles. The RRT+Dijkstra approach first builds a graph using RRT
+    and then finds the shortest path in that graph using Dijkstra's algorithm.
     """
     
     def __init__(self, 
@@ -179,7 +181,7 @@ class HybridPolicy:
     
     def _plan_global_path(self, start_position: np.ndarray, goal_position: np.ndarray):
         """
-        Plan a global path using RRT with path optimization.
+        Plan a global path using RRT+Dijkstra with path optimization.
         
         Parameters
         ----------
@@ -266,9 +268,10 @@ class HybridPolicy:
                 
                 return
             
-            # If direct path is not possible, use RRT
-            # Create RRT planner
-            planner = RRTPlanner(
+            # If direct path is not possible, use RRT+Dijkstra
+            # Create RRT+Dijkstra planner
+            print("Using RRT+Dijkstra for path planning")
+            planner = RRTDijkstraPlanner(
                 start=start_position,
                 goal=goal_position,
                 client_id=self.client_id,
