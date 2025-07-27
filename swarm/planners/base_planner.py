@@ -12,26 +12,18 @@ class BasePlanner(ABC):
     """Base class for all path planners."""
     
     def __init__(self, 
-                 start: Tuple[float, float, float],
-                 goal: Tuple[float, float, float],
-                 client_id: int,
+                 client_id: Optional[int] = None,
                  obstacle_ids: Optional[List[int]] = None):
         """
         Initialize the path planner.
         
         Parameters
         ----------
-        start : Tuple[float, float, float]
-            Start position (x, y, z)
-        goal : Tuple[float, float, float]
-            Goal position (x, y, z)
-        client_id : int
-            PyBullet client ID
+        client_id : Optional[int]
+            PyBullet client ID for collision checking
         obstacle_ids : Optional[List[int]]
-            List of obstacle IDs in the PyBullet simulation
+            List of obstacle IDs for collision checking
         """
-        self.start = np.array(start)
-        self.goal = np.array(goal)
         self.client_id = client_id
         self.obstacle_ids = obstacle_ids or []
         

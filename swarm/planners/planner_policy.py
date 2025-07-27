@@ -3,11 +3,14 @@ Policy wrapper for path planners.
 """
 from typing import List, Tuple, Dict, Any, Optional
 import numpy as np
-import gym
+import gymnasium as gym
 
 from swarm.planners.base_planner import BasePlanner
 from swarm.planners.rrt import RRTPlanner
+from swarm.planners.rrt_optimized import OptimizedRRTPlanner
 from swarm.planners.dijkstra import DijkstraPlanner
+from swarm.planners.astar import AStarPlanner
+from swarm.planners.path_smoother import PathSmoother
 
 
 class PlannerPolicy:
@@ -24,6 +27,8 @@ class PlannerPolicy:
                  planner_type: str = "rrt",
                  client_id: Optional[int] = None,
                  obstacle_ids: Optional[List[int]] = None,
+                 use_path_smoothing: bool = True,
+                 smoothing_method: str = "spline",
                  **kwargs):
         """
         Initialize the planner policy.
@@ -35,11 +40,15 @@ class PlannerPolicy:
         action_space : gym.spaces.Space
             Action space
         planner_type : str
-            Type of planner to use ("rrt" or "dijkstra")
+            Type of planner to use ("rrt", "rrt_optimized", "dijkstra", "astar")
         client_id : Optional[int]
             PyBullet client ID
         obstacle_ids : Optional[List[int]]
             List of obstacle IDs in the PyBullet simulation
+        use_path_smoothing : bool
+            Whether to apply path smoothing
+        smoothing_method : str
+            Path smoothing method ("spline", "shortcut", "gradient", "bezier")
         **kwargs : Dict[str, Any]
             Additional arguments for the planner
         """
@@ -49,17 +58,35 @@ class PlannerPolicy:
         self.client_id = client_id
         self.obstacle_ids = obstacle_ids or []
         self.kwargs = kwargs
+        self.use_path_smoothing = use_path_smoothing
+        self.smoothing_method = smoothing_method
         
         # Path planning variables
         self.start = None
         self.goal = None
         self.planner = None
         self.path = []
+        self.raw_path = []  # Store original path before smoothing
         self.current_waypoint_idx = 0
         
         # Control parameters
         self.max_speed = 1.0  # m/s
         self.waypoint_threshold = 0.2  # m
+        
+        # Path smoother
+        if self.use_path_smoothing:
+            collision_checker = None
+            if self.client_id is not None and self.obstacle_ids:
+                # Create a collision checker function
+                def check_collision(pos):
+                    from swarm.planners.base_planner import BasePlanner
+                    temp_planner = BasePlanner(self.client_id, self.obstacle_ids)
+                    return temp_planner.check_collision(pos)
+                collision_checker = check_collision
+            
+            self.path_smoother = PathSmoother(collision_checker)
+        else:
+            self.path_smoother = None
         
     def predict(self, observation: np.ndarray, deterministic: bool = True) -> Tuple[np.ndarray, None]:
         """
@@ -121,8 +148,24 @@ class PlannerPolicy:
                 obstacle_ids=self.obstacle_ids,
                 **self.kwargs
             )
+        elif self.planner_type == "rrt_optimized":
+            self.planner = OptimizedRRTPlanner(
+                start=self.start,
+                goal=self.goal,
+                client_id=self.client_id,
+                obstacle_ids=self.obstacle_ids,
+                **self.kwargs
+            )
         elif self.planner_type == "dijkstra":
             self.planner = DijkstraPlanner(
+                start=self.start,
+                goal=self.goal,
+                client_id=self.client_id,
+                obstacle_ids=self.obstacle_ids,
+                **self.kwargs
+            )
+        elif self.planner_type == "astar":
+            self.planner = AStarPlanner(
                 start=self.start,
                 goal=self.goal,
                 client_id=self.client_id,
@@ -133,12 +176,33 @@ class PlannerPolicy:
             raise ValueError(f"Unknown planner type: {self.planner_type}")
             
         # Plan a path
-        self.path = self.planner.plan()
+        self.raw_path = self.planner.plan()
+        
+        # Apply path smoothing if enabled
+        if self.use_path_smoothing and self.path_smoother and len(self.raw_path) > 2:
+            try:
+                self.path = self.path_smoother.smooth_path(
+                    self.raw_path, 
+                    method=self.smoothing_method
+                )
+                print(f"Path smoothed: {len(self.raw_path)} -> {len(self.path)} waypoints")
+            except Exception as e:
+                print(f"Path smoothing failed: {e}, using raw path")
+                self.path = self.raw_path
+        else:
+            self.path = self.raw_path
+            
         self.current_waypoint_idx = 0
         
         # Visualize the path if a client ID is provided
         if self.client_id is not None and len(self.path) > 0:
-            self.planner.visualize_path(self.path)
+            # Visualize raw path in red
+            if hasattr(self.planner, 'visualize_path') and len(self.raw_path) > 0:
+                self.planner.visualize_path(self.raw_path, color=(1, 0, 0), line_width=1.0)
+            
+            # Visualize smoothed path in green
+            if len(self.path) != len(self.raw_path):
+                self.planner.visualize_path(self.path, color=(0, 1, 0), line_width=3.0)
     
     def _follow_path(self, current_position: np.ndarray) -> np.ndarray:
         """
