@@ -65,8 +65,8 @@ class HybridPolicy:
         self.goal_position = None
         
         # Control parameters
-        self.max_speed = 3.0  # m/s - увеличиваем скорость для быстрого достижения цели
-        self.waypoint_threshold = 0.15  # m - уменьшаем порог для более точного следования
+        self.max_speed = 4.0  # m/s - увеличиваем скорость для быстрого достижения цели
+        self.waypoint_threshold = 0.2  # m - увеличиваем порог для более быстрого прохождения точек
         self.use_rl_threshold = 1.0  # Distance threshold to switch to RL control
         
         # Statistics
@@ -230,11 +230,21 @@ class HybridPolicy:
             
             # If direct path is possible, use it
             if direct_path_possible:
-                # Add intermediate waypoint slightly above for better control
-                midpoint = (start_position + goal_position) / 2
-                midpoint[2] += 0.5  # Add height to avoid ground obstacles
+                # Оптимизируем путь для более прямого полета
+                # Вычисляем вектор от старта к цели
+                direction = goal_position - start_position
+                distance = np.linalg.norm(direction)
                 
-                self.global_path = [start_position, midpoint, goal_position]
+                # Создаем более прямой путь с минимальным количеством точек
+                if distance > 3.0:
+                    # Для длинных дистанций добавляем одну промежуточную точку
+                    midpoint = start_position + direction * 0.5
+                    # Немного поднимаем промежуточную точку для избежания препятствий
+                    midpoint[2] = max(midpoint[2], start_position[2] + 0.3, goal_position[2] + 0.3)
+                    self.global_path = [start_position, midpoint, goal_position]
+                else:
+                    # Для коротких дистанций летим напрямую
+                    self.global_path = [start_position, goal_position]
                 self.current_waypoint_idx = 0
                 self.last_plan_time = time.time()
                 self.last_plan_position = start_position.copy()
@@ -298,20 +308,54 @@ class HybridPolicy:
                 if self.client_id is not None:
                     planner.visualize_path(optimized_path, color=(0, 0, 1), line_width=2.0)  # Blue path
             else:
-                # If planning fails, create a path with an intermediate point
-                midpoint = (start_position + goal_position) / 2
-                midpoint[2] += 1.0  # Add height to avoid obstacles
+                # Оптимизированный запасной путь при неудачном планировании
+                direction = goal_position - start_position
+                distance = np.linalg.norm(direction)
                 
-                self.global_path = [start_position, midpoint, goal_position]
+                # Создаем более эффективный путь
+                if distance > 2.0:
+                    # Для длинных дистанций используем две промежуточные точки
+                    # Первая точка - вверх от старта
+                    first_point = start_position.copy()
+                    first_point[2] += 0.5
+                    
+                    # Вторая точка - над целью
+                    last_point = goal_position.copy()
+                    last_point[2] += 0.5
+                    
+                    self.global_path = [start_position, first_point, last_point, goal_position]
+                else:
+                    # Для коротких дистанций - одна промежуточная точка повыше
+                    midpoint = (start_position + goal_position) / 2
+                    midpoint[2] = max(midpoint[2] + 0.8, start_position[2] + 0.8, goal_position[2] + 0.8)
+                    self.global_path = [start_position, midpoint, goal_position]
+                
                 self.current_waypoint_idx = 0
                 
         except Exception as e:
             print(f"Planning failed: {e}")
-            # Fallback to direct path with intermediate point
-            midpoint = (start_position + goal_position) / 2
-            midpoint[2] += 1.0  # Add height to avoid obstacles
+            # Оптимизированный запасной путь при ошибке
+            direction = goal_position - start_position
+            distance = np.linalg.norm(direction)
             
-            self.global_path = [start_position, midpoint, goal_position]
+            # Создаем более эффективный путь
+            if distance > 2.0:
+                # Для длинных дистанций используем две промежуточные точки
+                # Первая точка - вверх от старта
+                first_point = start_position.copy()
+                first_point[2] += 0.5
+                
+                # Вторая точка - над целью
+                last_point = goal_position.copy()
+                last_point[2] += 0.5
+                
+                self.global_path = [start_position, first_point, last_point, goal_position]
+            else:
+                # Для коротких дистанций - одна промежуточная точка повыше
+                midpoint = (start_position + goal_position) / 2
+                midpoint[2] = max(midpoint[2] + 0.8, start_position[2] + 0.8, goal_position[2] + 0.8)
+                self.global_path = [start_position, midpoint, goal_position]
+            
             self.current_waypoint_idx = 0
     
     def _optimize_path(self, path: List[np.ndarray]) -> List[np.ndarray]:
@@ -404,13 +448,13 @@ class HybridPolicy:
             print(f"  Distance to goal: {distance_to_goal:.2f}")
         
         # DIRECT GOAL APPROACH: If we're very close to the goal, target it directly
-        if distance_to_goal < 0.3:
+        if distance_to_goal < 0.5:  # Увеличиваем порог для более раннего перехода к точному управлению
             self.waypoint_control_count += 1
             return self._precise_goal_control(current_position, goal_position)
         
         # EMERGENCY TIMEOUT: If we're running out of time, go directly to goal
         elapsed_time = self.waypoint_control_count * 0.02  # Assuming 50Hz control
-        if elapsed_time > 25.0 and distance_to_goal < 5.0:  # If 25 seconds passed and goal is within 5m
+        if elapsed_time > 15.0 and distance_to_goal < 5.0:  # Уменьшаем порог времени для более раннего перехода к прямому управлению
             # Emergency direct approach to goal
             self.waypoint_control_count += 1
             
@@ -451,7 +495,7 @@ class HybridPolicy:
                     target_waypoint = self.global_path[self.current_waypoint_idx]
             
             # SHORTCUT: Check if we're close to the goal (even if not following the exact path)
-            if distance_to_goal < 0.8:
+            if distance_to_goal < 1.2:  # Увеличиваем порог для более раннего перехода к прямому управлению
                 # When close to goal, target it directly
                 self.waypoint_control_count += 1
                 return self._precise_goal_control(current_position, goal_position)
@@ -520,16 +564,16 @@ class HybridPolicy:
             # Нормализуем направление
             norm_direction = direction / distance
             
-            # Адаптивная скорость в зависимости от расстояния
-            if distance < 0.3:
+            # Адаптивная скорость в зависимости от расстояния - оптимизируем для более точного приближения
+            if distance < 0.2:
                 # Очень близко - очень точное, медленное движение
                 speed = min(0.3, distance * 2.0)
-            elif distance < 1.0:
+            elif distance < 0.6:
                 # Близко - точное движение
-                speed = min(0.8, distance * 1.5)
+                speed = min(1.0, distance * 1.8)
             else:
                 # Дальше - более быстрое движение
-                speed = min(2.0, distance)
+                speed = min(2.5, distance * 1.2)
             
             # Применяем скорость к направлению
             vx = norm_direction[0] * speed
@@ -591,9 +635,9 @@ class HybridPolicy:
                 # Get the AABB of the obstacle
                 aabb_min, aabb_max = p.getAABB(obstacle_id, physicsClientId=self.client_id)
                 
-                # Expand AABB by safety margin
-                aabb_min = np.array(aabb_min) - 0.1
-                aabb_max = np.array(aabb_max) + 0.1
+                # Уменьшаем запас безопасности для более оптимального пути
+                aabb_min = np.array(aabb_min) - 0.05
+                aabb_max = np.array(aabb_max) + 0.05
                 
                 # Calculate obstacle center
                 obstacle_center = np.array([(aabb_min[i] + aabb_max[i]) / 2 for i in range(3)])
@@ -647,16 +691,16 @@ class HybridPolicy:
             # Нормализуем направление
             norm_direction = direction / distance
             
-            # Адаптивная скорость в зависимости от расстояния
-            if distance < 0.5:
+            # Адаптивная скорость в зависимости от расстояния - оптимизируем для более быстрого полета
+            if distance < 0.3:
                 # Медленно при приближении к цели
-                speed = min(self.max_speed * 0.5, distance * 1.5)
-            elif distance < 1.0:
+                speed = min(self.max_speed * 0.4, distance * 1.5)
+            elif distance < 0.8:
                 # Средняя скорость на среднем расстоянии
-                speed = min(self.max_speed * 0.7, distance * 1.2)
+                speed = min(self.max_speed * 0.8, distance * 1.5)
             else:
                 # Полная скорость на большом расстоянии
-                speed = min(self.max_speed, distance)
+                speed = min(self.max_speed, distance * 1.2)
             
             # Применяем скорость к направлению
             vx = norm_direction[0] * speed
