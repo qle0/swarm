@@ -65,8 +65,8 @@ class HybridPolicy:
         self.goal_position = None
         
         # Control parameters
-        self.max_speed = 4.0  # m/s - увеличиваем скорость для быстрого достижения цели
-        self.waypoint_threshold = 0.2  # m - увеличиваем порог для более быстрого прохождения точек
+        self.max_speed = 5.0  # m/s - увеличиваем скорость для быстрого достижения цели
+        self.waypoint_threshold = 0.25  # m - увеличиваем порог для более быстрого прохождения точек
         self.use_rl_threshold = 1.0  # Distance threshold to switch to RL control
         
         # Statistics
@@ -565,15 +565,15 @@ class HybridPolicy:
             norm_direction = direction / distance
             
             # Адаптивная скорость в зависимости от расстояния - оптимизируем для более точного приближения
-            if distance < 0.2:
+            if distance < 0.15:
                 # Очень близко - очень точное, медленное движение
                 speed = min(0.3, distance * 2.0)
-            elif distance < 0.6:
+            elif distance < 0.5:
                 # Близко - точное движение
-                speed = min(1.0, distance * 1.8)
+                speed = min(1.2, distance * 2.0)
             else:
                 # Дальше - более быстрое движение
-                speed = min(2.5, distance * 1.2)
+                speed = min(3.0, distance * 1.5)
             
             # Применяем скорость к направлению
             vx = norm_direction[0] * speed
@@ -692,15 +692,15 @@ class HybridPolicy:
             norm_direction = direction / distance
             
             # Адаптивная скорость в зависимости от расстояния - оптимизируем для более быстрого полета
-            if distance < 0.3:
+            if distance < 0.2:
                 # Медленно при приближении к цели
-                speed = min(self.max_speed * 0.4, distance * 1.5)
-            elif distance < 0.8:
+                speed = min(self.max_speed * 0.3, distance * 1.5)
+            elif distance < 0.6:
                 # Средняя скорость на среднем расстоянии
-                speed = min(self.max_speed * 0.8, distance * 1.5)
+                speed = min(self.max_speed * 0.9, distance * 1.8)
             else:
                 # Полная скорость на большом расстоянии
-                speed = min(self.max_speed, distance * 1.2)
+                speed = min(self.max_speed, distance * 1.5)
             
             # Применяем скорость к направлению
             vx = norm_direction[0] * speed
