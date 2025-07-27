@@ -161,7 +161,7 @@ def test_hybrid_policy(start_pos, goal_pos, client_id, obstacle_ids, rl_policy=N
         ])
         
         # Get the action from the hybrid policy
-        action, info = hybrid_policy.act(observation)
+        action, info = hybrid_policy.act(observation, t=steps * dt)
         
         # Update the metrics
         if info.get('planning', False):
@@ -189,9 +189,25 @@ def test_hybrid_policy(start_pos, goal_pos, client_id, obstacle_ids, rl_policy=N
             success = True
             print(f"SUCCESS! Reached goal at t={steps * dt:.2f}")
         
+        # Check for collision
+        for obstacle_id in obstacle_ids:
+            closest_points = p.getClosestPoints(
+                bodyA=drone_id,
+                bodyB=obstacle_id,
+                distance=0.1,  # Check for collisions within 10cm
+                physicsClientId=client_id
+            )
+            if len(closest_points) > 0:
+                print(f"COLLISION detected at t={steps * dt:.2f}")
+                success = False
+                break
+        
         # Step the simulation
         p.stepSimulation()
-        time.sleep(dt / 10)  # Slow down the simulation for visualization
+        
+        # Only sleep if GUI is enabled
+        if client_id is not None and p.getConnectionInfo(client_id)["connectionMethod"] == p.GUI:
+            time.sleep(dt / 10)  # Slow down the simulation for visualization
         
         steps += 1
     
@@ -222,31 +238,79 @@ def test_hybrid_policy(start_pos, goal_pos, client_id, obstacle_ids, rl_policy=N
 
 def main():
     """Main function."""
-    # Set up PyBullet
-    client_id, obstacle_ids = setup_pybullet(gui=True)
+    # Set up PyBullet without GUI
+    client_id, obstacle_ids = setup_pybullet(gui=False)
     
     # Load the RL policy
     rl_policy = load_rl_policy()
     
-    # Define start and goal positions
-    start_pos = [0.0, 0.0, 1.5]
-    goal_pos = [-2.0, -2.0, 0.5]
+    # Define multiple test scenarios
+    test_scenarios = [
+        {
+            "start": [0.0, 0.0, 1.5],
+            "goal": [-2.0, -2.0, 0.5],
+            "name": "Diagonal path with obstacles"
+        },
+        {
+            "start": [0.0, 0.0, 1.5],
+            "goal": [3.0, 0.0, 1.0],
+            "name": "Straight path with obstacles"
+        },
+        {
+            "start": [0.0, 0.0, 1.5],
+            "goal": [0.0, 3.0, 2.0],
+            "name": "Vertical path with obstacles"
+        },
+        {
+            "start": [-2.5, -2.5, 1.5],
+            "goal": [2.5, 2.5, 1.5],
+            "name": "Long diagonal path"
+        },
+        {
+            "start": [2.5, 2.5, 1.5],
+            "goal": [-2.5, -2.5, 0.5],
+            "name": "Reverse diagonal path with descent"
+        }
+    ]
     
-    print(f"Task start: {start_pos}")
-    print(f"Task goal: {goal_pos}")
-    print(f"Task horizon: 30")
+    # Run all test scenarios
+    total_score = 0.0
+    successful_tests = 0
     
-    print("Testing advanced hybrid flight planning approach...")
+    for i, scenario in enumerate(test_scenarios):
+        print(f"\n===== Test Scenario {i+1}: {scenario['name']} =====")
+        print(f"Start: {scenario['start']}")
+        print(f"Goal: {scenario['goal']}")
+        
+        # Test the hybrid policy
+        success, time_taken, planning_count, rl_control_count, waypoint_control_count = test_hybrid_policy(
+            start_pos=scenario['start'],
+            goal_pos=scenario['goal'],
+            client_id=client_id,
+            obstacle_ids=obstacle_ids,
+            rl_policy=rl_policy,
+            max_steps=1000
+        )
+        
+        # Calculate score for this test
+        test_score = 0.98 if success else 0.0
+        total_score += test_score
+        if success:
+            successful_tests += 1
     
-    # Test the hybrid policy
-    success, time_taken, planning_count, rl_control_count, waypoint_control_count = test_hybrid_policy(
-        start_pos=start_pos,
-        goal_pos=goal_pos,
-        client_id=client_id,
-        obstacle_ids=obstacle_ids,
-        rl_policy=rl_policy,
-        max_steps=1000
-    )
+    # Calculate average score
+    average_score = total_score / len(test_scenarios)
+    success_rate = successful_tests / len(test_scenarios) * 100
+    
+    # Print overall results
+    print("\n====================================================")
+    print("OVERALL RESULTS")
+    print("====================================================")
+    print(f"Tests run: {len(test_scenarios)}")
+    print(f"Successful tests: {successful_tests}")
+    print(f"Success rate: {success_rate:.1f}%")
+    print(f"Average score: {average_score:.3f}")
+    print("====================================================")
     
     # Disconnect from PyBullet
     p.disconnect(client_id)
